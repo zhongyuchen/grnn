@@ -24,6 +24,11 @@ int main(int argc, char** argv) {
   uint32_t input_length = 100;
 
   std::vector<float *> weights;
+  /* create LSTM weights including: 
+  W [input x hidden] x4
+  U [hidden x hidden] x4
+  b [hidden] x4
+  */
   create_dummy_weights_lstm(weights, input, hidden);
  
   // Create layer
@@ -36,8 +41,12 @@ int main(int argc, char** argv) {
   model.initialize();
   
   float * testInput;
+  /* pinned memory 
+  input shape [batch x input x len]
+  */
   cudaHostAlloc((void **) &testInput, sizeof(float) * batch * input * input_length, cudaHostAllocDefault); CUDA_ERR;
 
+  /* init */
   for (uint32_t i = 0; i < batch * input * input_length; i++) {
     testInput[i] = (i / input) % batch;
   }

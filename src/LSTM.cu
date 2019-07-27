@@ -435,12 +435,17 @@ void process_biases(T * output, std::vector<T*> weights, uint32_t hidden_size) {
 // Initialize all layer weights and send to GPU
 template<typename T>
 uint32_t LSTMLayer<T>::initialize() {
-  
+  /* 
+    just total bytes
+  */
   uint32_t input_footprint = input_weight_footprint();
   uint32_t hidden_footprint = hidden_weight_footprint();
   uint32_t bias_footprint = bias_weight_footprint();
   
   // Weight buffer allocations
+  /* 
+  cudaMalloc allocate memory in global memory
+  */
   cudaHostAlloc((void **) &(this->packed_input_weights), input_footprint, cudaHostAllocDefault); CUDA_ERR;
   cudaHostAlloc((void **) &(this->packed_hidden_weights), hidden_footprint, cudaHostAllocDefault); CUDA_ERR;
   cudaHostAlloc((void **) &(this->packed_biases), bias_footprint, cudaHostAllocDefault); CUDA_ERR;
@@ -449,11 +454,17 @@ uint32_t LSTMLayer<T>::initialize() {
   cudaMalloc((void **) &(this->packed_biases_gpu), bias_footprint); CUDA_ERR;
   
   // Reorganize weights (typically a transpose)
+  /*
+  just copy to buffer in host
+  */
   process_input_weights(this->packed_input_weights, this->host_weights, this->input_size, this->hidden_size);
   process_hidden_weights(this->packed_hidden_weights, this->host_weights, this->hidden_size);
   process_biases(this->packed_biases, this->host_weights, this->hidden_size);
   
   // Send weights to GPU
+  /*
+  just copy to buffer in GPU
+  */
   cudaMemcpy(this->packed_input_weights_gpu, this->packed_input_weights, input_footprint, cudaMemcpyHostToDevice); CUDA_ERR;
   cudaMemcpy(this->packed_hidden_weights_gpu, this->packed_hidden_weights, hidden_footprint, cudaMemcpyHostToDevice); CUDA_ERR;
   cudaMemcpy(this->packed_biases_gpu, this->packed_biases, bias_footprint, cudaMemcpyHostToDevice); CUDA_ERR;
@@ -493,22 +504,41 @@ uint32_t LSTMModel<T>::initialize() {
   this->mm_n = this->output_size * LSTM_GATES;
 
   // Output allocations, assumes sequence length less than 100
+  /*
+  output shape [hidden x batch x len]
+  */
   cudaHostAlloc((void **) &(this->host_output), this->output_size * this->batch_size * sizeof(T) * 100, cudaHostAllocDefault);
   cudaMalloc((void **) &(this->gpu_output), this->output_size * this->batch_size * sizeof(T) * 100);
   
   // Input allocations, assumes sequence length less than 100
+  /*
+  input shape [input x batch x len]
+  */
   cudaMalloc((void **) &(this->gpu_inputs), this->initial_input_size * this->batch_size * 100 * sizeof(T));
   cudaMalloc((void **) &(this->gpu_precompute), this->output_size * this->batch_size * LSTM_GATES * 100 * sizeof(T));
 
   // Initialize hidden state, for our purposes we use 0's
+  /*
+    what's this ??? shape [hidden x batch]
+  */
   cudaMalloc((void **) &(this->gpu_hidden_initializer), this->output_size * this->batch_size * sizeof(T));
   cudaMemset((void *)this->gpu_hidden_initializer, 0, this->output_size * this->batch_size * sizeof(T));
   
   // Synchronization buffers. Always allocated to full dimensionality so that they may be easily reused from run to run
+  /*
+    what's this ???
+  */
   cudaMalloc((void **) &(this->gpu_syncIn), 80 * sizeof(int) * LINE_SIZE);
   cudaMalloc((void **) &(this->gpu_syncOut), 80 * sizeof(int) * LINE_SIZE);
  
   // GEMM Kernel parameters
+  /*
+    matrix-matrix mult
+    A[m x k] @ B[k x n]
+    m: batch x len
+    k: input
+    n: hidden x gates
+  */
   this->paramsMM[0] = (void*) &(this->gpu_inputs);
   this->paramsMM[1] = (void*) &(this->gpu_weights_input);
   this->paramsMM[2] = (void*) &(this->gpu_precompute);
@@ -516,6 +546,7 @@ uint32_t LSTMModel<T>::initialize() {
   this->paramsMM[5] = (void*) &(this->mm_n);
 
   // LSTM Kernel parameters
+  
   this->paramsLSTM[0] = (void*) &(this->gpu_precompute);
   this->paramsLSTM[1] = (void*) &(this->gpu_hidden_initializer);
   this->paramsLSTM[2] = (void*) &(this->gpu_weights_hidden);
@@ -561,11 +592,18 @@ float LSTMModel<T>::run_input(T* input, uint32_t * length) {
   this->paramsLSTM[7] = (void *) length;
   
   // GEMM Kernel dimensioning
+  /*
+    grid [n x m] / TILE_SIZE
+    block [16 x 16]
+  */
   dim3 mm_grid = dim3((this->mm_n + MM_TILE_SIZE - 1) / MM_TILE_SIZE, (this->mm_m + MM_TILE_SIZE - 1) / MM_TILE_SIZE);
   dim3 mm_block = dim3(MM_BLOCK_SIZE, MM_BLOCK_SIZE);
   size_t mm_sm_requirement = MM_TILE_SIZE * MM_TILE_SIZE * 2 * sizeof(float);
   
   // LSTM Kernel dimensioning
+  /*
+
+  */
   int effective_w = (this->num_groups * this->tile_width) / LSTM_GATES;
   dim3 lstm_rnn_grid = dim3((this->output_size + effective_w - 1) / effective_w, (this->batch_size + this->tile_height - 1) / this->tile_height);
   dim3 lstm_rnn_block = dim3(this->num_groups * this->group_threads);  
